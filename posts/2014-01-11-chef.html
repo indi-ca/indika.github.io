@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <title>HydraSquared - Cooking a Web Server with Chef-Solo</title>
+        <link rel="stylesheet" type="text/css" href="../css/default.css" />
+    </head>
+    <body>
+        <div id="header">
+            <div id="logo">
+                <a href="../">HydraSquared</a>
+            </div>
+            <div id="navigation">
+                <a href="../">Home</a>
+                <!-- <a href="/about.html">About</a> -->
+                <!-- <a href="/contact.html">Contact</a> -->
+                <!-- <a href="/archive.html">Archive</a> -->
+            </div>
+        </div>
+
+        <div id="content">
+            <h1>Cooking a Web Server with Chef-Solo</h1>
+
+            <div class="info">
+    Posted on January 11, 2014
+    
+        by Indika Piyasena
+    
+</div>
+
+<p>Stasis is unstable. Chaos always seeps through. My web server was so well configured, that it left me in a position reluctant to make any changes. Thus, this component fell into stasis. It eventually broke, and all development came to a halt, until it was resolved.</p>
+<p>With Chef, you can declare your server architecture, and cook it as many times as you like. It operates idempotently. Re-initializing and re-cooking your server often is the best counter against stasis.</p>
+<p>If you are like me, and like to experiment, then often things can go fubar. It is comforting and encouraging knowing that everything can be reconstructed in half an hour.</p>
+<p>Despite being conceptually simple, getting started was the biggest obstacle I experienced - and hence the purpose behind this article.</p>
+<h1 id="chef-and-knife">Chef and Knife</h1>
+<p>Chef offers a means of declaring a server architecture that is agnostic to the underlying platform.</p>
+<p>Its original intention is to cook a farm of servers, with one server acting as the master. Chef-Solo differs in the way that it does not need a dedicated Chef Server. One of the quirks between full-blown Chef and Chef-Solo is that configuration files have to be present on your local machine.</p>
+<p>Knife is a tool. This part is clear from the metaphor. Intuitively, I thought that knife was a tool used by Chef to perform the cook. I was wrong. Knife is a tool that you use to instruct Chef to do its job. Knife is a nice name, but a bit counter intuitive. “Knife Solo” is the specific version of the tool required for solo cooks.</p>
+<p>In addition, before the target node can be cooked, it needs to be prepared by Knife Solo.</p>
+<h1 id="ruby">Ruby</h1>
+<p>You will need Ruby to cook with Chef. RVM is a means to manage different versions of Ruby. RVM has been criticised for achieving too much, and that RBEnv is more focussed. However, RVM works for me for now. I had to have some faith when installing RVM, granting curl root privileges:</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash">\<span class="kw">curl</span> -L https://get.rvm.io <span class="kw">|</span> <span class="kw">bash</span> -s stable --ruby
+    <span class="kw">curl</span> -L get.rvm.io <span class="kw">|</span> <span class="kw">bash</span> -s stable</code></pre></div>
+<p>The root privileges are required to make changes to openssl. Should I not be a bit more paranoid here?</p>
+<p>After it is installed, it has to be activated.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">source</span> /Users/indika/.rvm/scripts/rvm</code></pre></div>
+<p>Bundler is awesome (according to the community). Use it to manage the gems required for the client side of the Chef. Use Gem to obtain Bundler.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">gem</span> install bundler</code></pre></div>
+<p>Now that the Ruby dependencies have been set up, we are ready to create a kitchen.</p>
+<h1 id="creating-a-kitchen">Creating a Kitchen</h1>
+<p>The kitchen is the structure you create on the client side before you cook your server.</p>
+<h2 id="chef">~/.chef</h2>
+<p>This is the default location where Knife looks for machine specific settings. This folder is not on the server, as I initially imagined. This is my <em>knife.rb</em> configuration file.</p>
+<div class="sourceCode"><pre class="sourceCode ruby"><code class="sourceCode ruby">knife[<span class="st">:provisioning_path</span>] = <span class="st">&quot;/home/root/solo&quot;</span>
+
+cookbook_path [
+    <span class="st">'./cookbooks'</span>,
+    <span class="st">'site-cookbooks'</span>]
+
+role_path     <span class="st">&quot;roles&quot;</span>
+data_bag_path <span class="st">&quot;data_bags&quot;</span>
+encrypted_data_bag_secret <span class="st">&quot;</span><span class="ot">#{</span><span class="dt">ENV</span>[<span class="st">'HOME'</span>]<span class="ot">}</span><span class="st">/.chef/motion_secret&quot;</span></code></pre></div>
+<p>My guess is that this file might be necessary for knife solo, because Chef was built to run on its own dedicated server.</p>
+<h2 id="a-workspace-for-the-kitchen">A workspace for the Kitchen</h2>
+<p>Create a directory for your kitchen.</p>
+<h3 id="bundler-and-the-gemfile">Bundler and the Gemfile</h3>
+<p>The Ruby library dependencies for Chef are specified in a Gemfile.</p>
+<div class="sourceCode"><pre class="sourceCode ruby"><code class="sourceCode ruby">source <span class="st">'https://rubygems.org'</span>
+
+gem <span class="st">'knife-solo'</span>
+gem <span class="st">'knife-solo_data_bag'</span>
+gem <span class="st">'librarian'</span>
+gem <span class="st">'multi_json'</span>
+gem <span class="st">'foodcritic'</span></code></pre></div>
+<p>Bundler is used to obtain these dependencies.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">bundle</span> install</code></pre></div>
+<p>Bundler is considered better than Gem to manage dependencies. I’m not sure why. I do know Bundler can maintain the specific version number required for the application (Chef). It also obtains the gems required by the required gems, and so forth. It simply just works.</p>
+<h3 id="scaffolding">Scaffolding</h3>
+<p>Choose a directory and use Knife to create a scaffolding.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">knife</span> solo init .</code></pre></div>
+<p>The scaffolding of your kitchen should look like:</p>
+<pre class="text"><code>├── Gemfile
+├── Gemfile.lock
+├── cookbooks
+│   └── - public cookbooks get loaded in here
+├── data_bags
+│   └── - secret stuff
+├── nodes
+│   └── - configuration of particular nodes
+├── roles
+│   └── - common configurations that can be applied
+│         across multiple nodes
+└── site-cookbooks
+    └── - cookbooks that you have written</code></pre>
+<h3 id="librarian-chef-and-the-cheffile">Librarian-Chef and the Cheffile</h3>
+<p>Cookbooks contain recipes that instruct Chef how to do stuff. One of the reasons Chef appeals to me the most is because of the wealth of open source cookbooks available.</p>
+<p>I’ve noticed three different managers for cookbooks:</p>
+<ul>
+<li>Librarian-Chef</li>
+<li>Berkshelf</li>
+<li>knife-github-cookbooks</li>
+</ul>
+<p>I started with Librarian-Chef and currently see no good reason to change. Use Librarian-Chef to initialise a Cheffile</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">librarian-chef</span> init</code></pre></div>
+<p>Here is a sample of my Cheffile:</p>
+<div class="sourceCode"><pre class="sourceCode ruby"><code class="sourceCode ruby">site <span class="st">'http://community.opscode.com/api/v1'</span>
+
+cookbook <span class="st">'runit'</span>
+cookbook <span class="st">'cron'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/cron.git'</span>
+cookbook <span class="st">'database'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/database.git'</span>
+cookbook <span class="st">'logwatch'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/logwatch.git'</span>
+cookbook <span class="st">'nginx'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/nginx.git'</span>
+cookbook <span class="st">'python'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/python.git'</span>
+cookbook <span class="st">'postgresql'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/opscode-cookbooks/postgresql.git'</span>
+cookbook <span class="st">'user'</span>, <span class="st">:git</span> =&gt; <span class="st">'git://github.com/fnichol/chef-user.git'</span></code></pre></div>
+<p>And then user librarian-chef to fetch the cookbooks:</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">librarian-chef</span> install --clean</code></pre></div>
+<h3 id="solo.rb">Solo.rb</h3>
+<p>This seems to be deprecated, since knife-solo v0.3.0.</p>
+<h1 id="bootstrapping-the-server">Bootstrapping the Server</h1>
+<p>Before you can cook your server, it has to be prepared for cooking. In an ideal world, Chef can and will completely determine the architecture of the server. However, when it comes to practicalities, the server still needs to be bootstrapped before it can be cooked. It broadly involves:</p>
+<ul>
+<li>setting up a SSH connection, so that you (meaning the software running on your computer) can securely communicate with it, and</li>
+<li>installing unattended upgrades, and any obviously required packages (I’m not going to be idealistic here on not having dependencies outside the Chef configuration)</li>
+<li>the existence of Chef specific libraries.</li>
+<li>the existence of the secret file to decrypt data bags (more on this later)</li>
+</ul>
+<h2 id="configuring-ssh">Configuring SSH</h2>
+<p>SSH is pretty much the standard when it comes to opening a secure communication channel with a server. I’ll assume you know how to set it up.</p>
+<p>There has been a recent debate on whether it is <a href="http://www.adayinthelifeof.nl/2012/03/12/why-putting-ssh-on-another-port-than-22-is-bad-idea">a bad idea</a> or <a href="http://www.danielmiessler.com/blog/putting-ssh-another-port-good-idea">a good idea</a> to use a non-default port. I prefer to use a non-default port because I cannot deal with the noise of random hackers.</p>
+<h2 id="remotely-installing-chef">Remotely installing Chef</h2>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">knife</span> solo prepare root@motion -p 2222
+
+… <span class="kw">Setting</span> up chef (11.6.2-1.ubuntu.12.04)</code></pre></div>
+<p>This installs Ruby, RubyGems and Chef on target machine. Chef needs to be installed on the server</p>
+<h2 id="create-a-secret-file-and-scp-it">Create a secret file and SCP it</h2>
+<p>Vulnerable pieces should be encrypted. More about this later. For now, simply generate a secret key and upload it via SCP.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">openssl</span> rand -base64 512 <span class="kw">&gt;</span> ~/.chef/motion_secret
+<span class="kw">scp</span> -P 2222 ~/.chef/motion_secret root@motion:/root/.chef/motion_secret</code></pre></div>
+<h1 id="nodes">Nodes</h1>
+<p>A particular node on your server farm is defined by .json file. I believe that the file must have the same name as its alias in your /etc/hosts. This is a good place to start interrogating Chef.</p>
+<p>It appears to be a collection of attributes - data that is specific to the node. The most pertinent attribute is the run list. The run list is where the action happens - it contains a list of recipes that will be applied. The order of which recipes appear in the run_list is preserved during the cook.</p>
+<h1 id="creating-your-own-cookbook">Creating your own Cookbook</h1>
+<p>Create a cookbook</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash"><span class="kw">knife</span> cookbook create entity -r md</code></pre></div>
+<p>For some reason, this command places my cookbook, not into the site-cookbooks directory, but into the cookbooks directory. Anyway, it’ll look a little bit like this:</p>
+<pre class="text"><code>entity
+├── CHANGELOG.md
+├── README.md
+├── attributes
+├── definitions
+├── files
+│   └── default
+├── libraries
+├── metadata.rb
+│   └── - information about the author
+│       - dependecies to other cookbooks exist here
+├── providers
+├── recipes
+│   └── default.rb
+├── resources
+└── templates
+    └── default
+</code></pre>
+<h2 id="cookbook-dependencies">Cookbook Dependencies</h2>
+<p>According to the official documentation: <em>Declaring cookbook dependencies is not required with chef-solo.</em> I have a hard time understanding why this is.</p>
+<p>There are two types of dependency statements:</p>
+<ul>
+<li>include_recipe ‘java’
+<ul>
+<li>include_recipe “java” or include_recipe “apache2::mod_ssl”</li>
+<li>These can be found at the top of a recipe</li>
+<li>the resources found in that recipe will be inserted (in the exact same order) at that point</li>
+</ul></li>
+<li>depends ‘java’
+<ul>
+<li>This can be found in the metadata of a cookbook</li>
+<li>I assume that this cookbook may be automatically obtained, however, I wonder how the exact URL is resolved.</li>
+</ul></li>
+</ul>
+<!-- ## Logging
+
+The warning logging works for me, but not the other ones.
+
+- Chef::Log.info('FINDMEFINDME')
+- Chef::Log.warn('i warn you')
+- Chef::Log.fatal!('something bad')
+
+Perhaps I need to increase the logging verbosity.
+ -->
+<h1 id="databags">Databags</h1>
+<p>Knife-solo uploads cookbooks, roles and data bags onto the target node. This was not obvious to me at first asI assumed initially that it only sends instructions. Hence, sensitive data needs to be encrypted before being stored on the target node.</p>
+<p>Databags are annoying, yet they feel necessary. Debugging broken bags are slow. However, they seem important and my struggled attempt to justify them are as follows:</p>
+<ul>
+<li>The Chef server could be compromised</li>
+<li>Data bags can be stored in source control without plain text</li>
+<li>Private information can be intercepted between the Chef server and the node.</li>
+</ul>
+<p>Nevertheless, I will use them to wire in good security habits.</p>
+<p>The basic idea is that keys are stored in .json files, and encrypted versions are sent to the Chef server.</p>
+<p>An annoying point to bear in mind is, the id of the data bag must match the name of the file, minus the .json name, otherwise the convention fails.</p>
+<h2 id="encryption-keys">Encryption Keys</h2>
+<p>Use openssl to generate an encryption key.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash">
+<span class="kw">openssl</span> rand -base64 512</code></pre></div>
+<p>Use this key to encrypt the data bag.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash">
+<span class="kw">knife</span> solo data bag create indika mybag
+<span class="kw">--secret-file</span> /Users/indika/.chef/encrypted_data_bag_secret
+<span class="kw">--data-bag-path</span> data_bags
+<span class="kw">-e</span> vim
+<span class="kw">--json-file</span> data_bags/indika/_mybag.json</code></pre></div>
+<p>This command takes a secret file, the path to place the bag, a preferred text editor and a source bag. Notice how this creates the data bag structure for me.</p>
+<div class="sourceCode"><pre class="sourceCode json"><code class="sourceCode json"><span class="fu">{</span>
+    <span class="dt">&quot;id&quot;</span><span class="fu">:</span> <span class="st">&quot;users&quot;</span><span class="fu">,</span>
+    <span class="dt">&quot;users&quot;</span><span class="fu">:</span> <span class="ot">[</span>
+        <span class="fu">{</span>
+            <span class="dt">&quot;user_name&quot;</span><span class="fu">:</span> <span class="st">&quot;publish&quot;</span><span class="fu">,</span>
+            <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;publish&quot;</span><span class="fu">,</span>
+            <span class="dt">&quot;comment&quot;</span><span class="fu">:</span> <span class="st">&quot;User for publishing content&quot;</span><span class="fu">,</span>
+            <span class="dt">&quot;use_ssh&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span>
+            <span class="dt">&quot;ssh_key&quot;</span><span class="fu">:</span> <span class="st">&quot;secret ssh key&quot;</span>
+        <span class="fu">}</span>
+    <span class="ot">]</span>
+<span class="fu">}</span></code></pre></div>
+<p>The databag can be accessed from within the recipe like this:</p>
+<div class="sourceCode"><pre class="sourceCode ruby"><code class="sourceCode ruby">
+secret = <span class="dt">Chef</span>::<span class="dt">EncryptedDataBagItem</span>.load_secret(<span class="st">&quot;/root/.chef/motion_secret&quot;</span>)
+
+entity_users_bag = <span class="dt">Chef</span>::<span class="dt">EncryptedDataBagItem</span>.load(<span class="st">&quot;entity&quot;</span>, <span class="st">&quot;users&quot;</span>, secret)
+entity_users_bag[<span class="st">'users'</span>].each <span class="kw">do</span> |user_item|
+    puts user_item[<span class="st">'user_name'</span>]
+<span class="kw">end</span></code></pre></div>
+<h1 id="roles">Roles</h1>
+<p>Roles are a means of applying common functionality to multiple nodes. I safely ignored roles for a long time since I was cooking a single node, until I needed to cook logstash.</p>
+<p>So, how do I create a role? Create a role file in the roles folder.</p>
+<p>The name of the role is logstash_server. So the name of the role file is logstash_server.rb</p>
+<p>The role file has an identifier, a runlist, default and override attributes.</p>
+<p>Roles can be defined using JSON or the Ruby DSL.</p>
+<p>I am going to add a recipe to this role, particularly logstash::server</p>
+<p>Now how do I apply this role to a node? and finally, JSON data passed to chef-solo:</p>
+<p>The role can then be applied to the node by adding it to the run list</p>
+<div class="sourceCode"><pre class="sourceCode json"><code class="sourceCode json">
+<span class="fu">{</span> <span class="dt">&quot;run_list&quot;</span><span class="fu">:</span> <span class="st">&quot;role[logstash_server]&quot;</span> <span class="fu">}</span></code></pre></div>
+<p>Roles are assigned to recipes. I need to assign the newly created role to the recipe logstash::server</p>
+<h1 id="cooking">Cooking</h1>
+<p>Finally, once the kitchen has been created, and the target node has been prepared, it is ready to be cooked.</p>
+<div class="sourceCode"><pre class="sourceCode bash"><code class="sourceCode bash">
+<span class="kw">knife</span> solo cook username@host</code></pre></div>
+<p>All the recipes in the runlist will be cooked in the order provided. It is unlikely that your first cook will be successful. However, every subsequent correction takes you further in building a stable web server - one which is not subjected to stasis.</p>
+<h1 id="next">Next</h1>
+<p>Chef is not the only framework cooking a server. Puppet, Ansible and Salt exist. Soon I will investigate into why Berkshelf is preferred over Librarian.</p>
+<!-- LWRPs and understanding attribute precedence seem important. -->
+<p>Useful links:</p>
+<p><a href="http://docs.opscode.com/essentials_cookbook_recipes.html">Essential Cookbook Recipes</a></p>
+<p><a href="https://github.com/indika/kitchen">Sample Kitchen</a></p>
+
+        </div>
+        <div id="footer">
+            Site proudly generated by
+            <a href="http://jaspervdj.be/hakyll">Hakyll</a>
+        </div>
+    </body>
+</html>
